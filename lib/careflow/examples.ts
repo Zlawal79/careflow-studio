@@ -40,11 +40,13 @@ workflow respiratory_monitor {
   monitor heart_rate
 
   rule low_oxygen {
-    when oxygen < 92
+    when oxygen < 92 for 30 seconds
 
     then {
       alert nurse
       priority high
+      require acknowledgment within 2 minutes
+      otherwise escalate physician
     }
   }
 
@@ -73,11 +75,13 @@ workflow cardiac_deterioration {
   monitor blood_pressure
 
   rule tachycardia {
-    when heart_rate > 120
+    when heart_rate > 120 for 5 minutes
 
     then {
       alert nurse
       priority high
+      require acknowledgement within 10 minutes
+      otherwise escalate physician
     }
   }
 
@@ -121,6 +125,8 @@ workflow critical_lab_escalation {
     then {
       alert nurse
       priority high
+      require acknowledgement within 5 minutes
+      otherwise escalate physician
     }
   }
 

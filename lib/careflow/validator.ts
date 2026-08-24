@@ -68,6 +68,48 @@ export function validate(workflow: Workflow): ValidationResult {
     for (const action of rule.actions) {
       checkAction(action, diagnostics);
     }
+
+    if (rule.condition.duration && (
+      !Number.isFinite(rule.condition.duration.milliseconds) ||
+      rule.condition.duration.milliseconds <= 0
+    )) {
+      diagnostics.push({
+        code: "invalid_duration",
+        severity: "error",
+        message: `Temporal duration in rule '${rule.name.name}' must be greater than zero.`,
+        loc: rule.condition.duration.loc,
+      });
+    }
+
+    if (rule.acknowledgement) {
+      if (
+        !Number.isFinite(rule.acknowledgement.within.milliseconds) ||
+        rule.acknowledgement.within.milliseconds <= 0
+      ) {
+        diagnostics.push({
+          code: "invalid_duration",
+          severity: "error",
+          message: `Acknowledgement duration in rule '${rule.name.name}' must be greater than zero.`,
+          loc: rule.acknowledgement.within.loc,
+        });
+      }
+      if (!rule.actions.some((action) => action.type === "AlertAction")) {
+        diagnostics.push({
+          code: "ack_without_alert",
+          severity: "error",
+          message: `Rule '${rule.name.name}' requires acknowledgement but does not alert a recipient.`,
+          loc: rule.acknowledgement.loc,
+        });
+      }
+      if (!rule.acknowledgement.otherwise) {
+        diagnostics.push({
+          code: "ack_missing_escalation",
+          severity: "error",
+          message: `Rule '${rule.name.name}' requires acknowledgement but has no 'otherwise escalate' target.`,
+          loc: rule.acknowledgement.loc,
+        });
+      }
+    }
   }
 
   for (const monitor of workflow.monitors) {
@@ -159,13 +201,15 @@ function sameCondition(a: ComparisonCondition, b: ComparisonCondition): boolean 
   return (
     a.variable.name === b.variable.name &&
     a.operator === b.operator &&
-    a.threshold.value === b.threshold.value
+    a.threshold.value === b.threshold.value &&
+    a.duration?.milliseconds === b.duration?.milliseconds
   );
 }
 
 /** True if every number satisfying `a` also satisfies `b`. */
 function implies(a: ComparisonCondition, b: ComparisonCondition): boolean {
   if (a.variable.name !== b.variable.name) return false;
+  if (a.duration?.milliseconds !== b.duration?.milliseconds) return false;
   const x = a.threshold.value;
   const y = b.threshold.value;
 
@@ -205,38 +249,41 @@ function mutuallyExclusive(a: ComparisonCondition, b: ComparisonCondition): bool
 }
 
 function rangesOverlap(a: ComparisonCondition, b: ComparisonCondition): boolean {
-  // Conservative overlap test using a dense sample around both thresholds.
-  const points = new Set<number>([
-    a.threshold.value,
-    b.threshold.value,
-    a.threshold.value - 1,
-    a.threshold.value + 1,
-    b.threshold.value - 1,
-    b.threshold.value + 1,
-    (a.threshold.value + b.threshold.value) / 2,
-    Number.NEGATIVE_INFINITY,
-    Number.POSITIVE_INFINITY,
-  ]);
-  for (const point of points) {
-    if (
-      Number.isFinite(point) &&
-      evaluate(a.operator, point, a.threshold.value) &&
-      evaluate(b.operator, point, b.threshold.value)
-    ) {
-      return true;
-    }
+  return intervals(a).some((left) =>
+    intervals(b).some((right) => intervalOverlap(left, right)),
+  );
+}
+
+interface Interval {
+  low: number;
+  lowClosed: boolean;
+  high: number;
+  highClosed: boolean;
+}
+
+function intervals(condition: ComparisonCondition): Interval[] {
+  const value = condition.threshold.value;
+  switch (condition.operator) {
+    case "<": return [{ low: -Infinity, lowClosed: false, high: value, highClosed: false }];
+    case "<=": return [{ low: -Infinity, lowClosed: false, high: value, highClosed: true }];
+    case ">": return [{ low: value, lowClosed: false, high: Infinity, highClosed: false }];
+    case ">=": return [{ low: value, lowClosed: true, high: Infinity, highClosed: false }];
+    case "==": return [{ low: value, lowClosed: true, high: value, highClosed: true }];
+    case "!=": return [
+      { low: -Infinity, lowClosed: false, high: value, highClosed: false },
+      { low: value, lowClosed: false, high: Infinity, highClosed: false },
+    ];
   }
-  // Infinity probes for open rays.
-  const rays = [-1e12, 1e12];
-  for (const point of rays) {
-    if (
-      evaluate(a.operator, point, a.threshold.value) &&
-      evaluate(b.operator, point, b.threshold.value)
-    ) {
-      return true;
-    }
-  }
-  return false;
+}
+
+function intervalOverlap(a: Interval, b: Interval): boolean {
+  const low = Math.max(a.low, b.low);
+  const high = Math.min(a.high, b.high);
+  if (low < high) return true;
+  if (low > high) return false;
+  const lowIncluded = (low !== a.low || a.lowClosed) && (low !== b.low || b.lowClosed);
+  const highIncluded = (high !== a.high || a.highClosed) && (high !== b.high || b.highClosed);
+  return lowIncluded && highIncluded;
 }
 
 function evaluate(

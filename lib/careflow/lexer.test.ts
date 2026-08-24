@@ -55,6 +55,10 @@ describe("lexer", () => {
     expect(tokens[0]?.numericValue).toBe(6.5);
   });
 
+  it("parses negative numbers for semantic duration validation", () => {
+    expect(lex("-1.5")[0]?.numericValue).toBe(-1.5);
+  });
+
   it("rejects a single equals sign", () => {
     expect(() => lex("oxygen = 92")).toThrow(LexError);
     try {
@@ -67,5 +71,14 @@ describe("lexer", () => {
 
   it("rejects unknown characters with a location", () => {
     expect(() => lex("workflow @")).toThrow(/Unexpected character/);
+  });
+
+  it("recognizes temporal and acknowledgement keywords", () => {
+    const kinds = lex("for require acknowledgment acknowledgement within otherwise")
+      .slice(0, -1).map((token) => token.kind);
+    expect(kinds).toEqual([
+      TokenKind.For, TokenKind.Require, TokenKind.Acknowledgment,
+      TokenKind.Acknowledgment, TokenKind.Within, TokenKind.Otherwise,
+    ]);
   });
 });

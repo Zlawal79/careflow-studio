@@ -80,4 +80,42 @@ describe("parser", () => {
   it("rejects extra tokens after the workflow", () => {
     expect(() => parse("workflow demo { } extra")).toThrow(/Unexpected input/);
   });
+
+  it("parses temporal conditions and both acknowledgement spellings", () => {
+    for (const spelling of ["acknowledgment", "acknowledgement"]) {
+      const ast = parse(`
+        workflow demo {
+          monitor oxygen
+          rule low {
+            when oxygen < 92 for 30 seconds
+            then {
+              alert nurse
+              require ${spelling} within 2 minutes
+              otherwise escalate physician
+            }
+          }
+        }
+      `);
+      expect(ast.rules[0]?.condition.duration).toMatchObject({
+        value: { value: 30 }, unit: "seconds", milliseconds: 30_000,
+      });
+      expect(ast.rules[0]?.acknowledgement).toMatchObject({
+        within: { milliseconds: 120_000 },
+        otherwise: { type: "EscalateAction", target: { name: "physician" } },
+      });
+    }
+  });
+
+  it("rejects invalid temporal syntax and duplicate acknowledgement clauses", () => {
+    expect(() => parse(`workflow d { monitor x rule r {
+      when x > 1 for 2 days then { alert nurse }
+    } }`)).toThrow(/Invalid duration unit/);
+    expect(() => parse(`workflow d { monitor x rule r {
+      when x > 1 then {
+        alert nurse
+        require acknowledgment within 1 minute otherwise escalate a
+        require acknowledgement within 2 minutes otherwise escalate b
+      }
+    } }`)).toThrow(/only one acknowledgement/);
+  });
 });

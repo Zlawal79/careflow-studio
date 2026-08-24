@@ -107,6 +107,7 @@ export type DiagnosticCode =
   | "empty_rule"
   | "invalid_priority"
   | "invalid_duration"
+  | "ack_without_alert"
   | "duplicate_condition"
   | "subsumed_condition"
   | "mutually_exclusive_conditions"
@@ -147,6 +148,7 @@ export interface FiredAction {
   kind: "alert" | "priority" | "escalate";
   target: string;
   ruleName: string;
+  firingInstanceId: string;
   timeMs: number;
   reason: "then" | "acknowledgement_timeout";
 }
@@ -191,6 +193,8 @@ export interface EvaluatedRule {
   comparisonHolds: boolean | null;
   result: boolean | null;
   matched: boolean;
+  /** Stable for the current firing, including while acknowledgement is pending. */
+  firingInstanceId: string | null;
   actions: FiredAction[];
   acknowledgement: AcknowledgementState;
   escalation: EscalationState;
@@ -228,6 +232,22 @@ export interface InterpreterResult {
   trace: TraceEvent[];
 }
 
+export type ConditionStatus = "true" | "false" | "unknown" | "waiting" | "satisfied";
+
+/** One rule observation at one simulation timestamp, designed for timeline UIs. */
+export interface SimulationEvent {
+  timestamp: number;
+  ruleName: string;
+  firingInstanceId: string | null;
+  observedValue: number | null;
+  conditionStatus: ConditionStatus;
+  elapsedDurationMs: number;
+  durationRequirement: DurationRequirement | null;
+  actions: FiredAction[];
+  acknowledgementStatus: AcknowledgementStatus;
+  escalationStatus: EscalationState;
+}
+
 export interface SimulationStepInput {
   /** Absolute simulation time in milliseconds. */
   timeMs: number;
@@ -241,6 +261,7 @@ export interface SimulationResult {
   steps: InterpreterResult[];
   final: InterpreterResult;
   triggeredActions: FiredAction[];
+  events: SimulationEvent[];
   trace: TraceEvent[];
 }
 

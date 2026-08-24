@@ -1,68 +1,121 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_PATIENT, respiratoryMonitoring } from "./examples";
-import { interpret } from "./interpreter";
+import { interpret, simulate } from "./interpreter";
 import { parse } from "./parser";
 import { run } from "./index";
+import { InterpreterError } from "./types";
+
+const immediate = `
+workflow demo {
+  monitor oxygen
+  rule low { when oxygen < 92 then { alert nurse priority high } }
+}`;
+
+const temporal = `
+workflow demo {
+  monitor oxygen
+  rule low {
+    when oxygen < 92 for 30 seconds
+    then {
+      alert nurse
+      priority high
+      require acknowledgment within 2 minutes
+      otherwise escalate physician
+    }
+  }
+}`;
 
 describe("interpreter", () => {
-  it("evaluates rules against a synthetic patient and records a trace", () => {
-    const ast = parse(respiratoryMonitoring.source);
-    const result = interpret(ast, {
-      oxygen: 87,
-      heart_rate: 82,
-      blood_pressure: 120,
-      temperature: 37,
+  it("keeps the Phase 1 snapshot API working", () => {
+    const result = interpret(parse(immediate), { oxygen: 87 });
+    expect(result.rules[0]?.condition.result).toBe(true);
+    expect(result.triggeredActions.map((action) => action.kind)).toEqual(["alert", "priority"]);
+    expect(result.triggeredActions[0]).toMatchObject({
+      firingInstanceId: "low#1", timeMs: 0, reason: "then",
     });
-
-    expect(result.workflowName).toBe("respiratory_monitor");
-    expect(result.rules).toHaveLength(2);
-
-    const low = result.rules.find((rule) => rule.ruleName === "low_oxygen")!;
-    expect(low.condition.result).toBe(true);
-    expect(low.matched).toBe(true);
-    expect(low.actions.map((action) => action.kind)).toEqual(["alert", "priority"]);
-
-    const severe = result.rules.find((rule) => rule.ruleName === "severe_hypoxia")!;
-    expect(severe.condition).toMatchObject({
-      variable: "oxygen",
-      operator: "<",
-      threshold: 88,
-      actual: 87,
-      result: true,
-    });
-    expect(severe.actions.map((action) => `${action.kind}:${action.target}`)).toEqual([
-      "alert:physician",
-      "priority:critical",
-      "escalate:rapid_response",
-    ]);
-
-    expect(result.triggeredActions.length).toBe(5);
-    expect(result.trace.some((event) => event.kind === "condition" && event.message.includes("TRUE"))).toBe(
-      true,
-    );
     expect(result.trace[0]?.kind).toBe("workflow_start");
     expect(result.trace.at(-1)?.kind).toBe("workflow_end");
   });
 
-  it("marks non-matching conditions as FALSE without firing actions", () => {
-    const ast = parse(respiratoryMonitoring.source);
-    const result = interpret(ast, { oxygen: 98, heart_rate: 70 });
-    expect(result.rules.every((rule) => rule.matched === false)).toBe(true);
-    expect(result.triggeredActions).toHaveLength(0);
-    expect(result.rules[0]?.condition.result).toBe(false);
+  it("accumulates time and fires at the exact duration boundary only once", () => {
+    const result = simulate(parse(temporal), [
+      { timeMs: 0, patient: { oxygen: 97 } },
+      { timeMs: 10_000, patient: { oxygen: 91 } },
+      { timeMs: 39_999, patient: { oxygen: 91 } },
+      { timeMs: 40_000, patient: { oxygen: 91 } },
+      { timeMs: 50_000, patient: { oxygen: 91 } },
+    ]);
+    expect(result.steps[2]?.rules[0]?.elapsedDurationMs).toBe(29_999);
+    expect(result.steps[2]?.triggeredActions).toHaveLength(0);
+    expect(result.steps[3]?.triggeredActions.map((action) => action.kind)).toEqual(["alert", "priority"]);
+    expect(result.steps[4]?.triggeredActions).toHaveLength(0);
   });
 
-  it("records an error when the patient is missing a required variable", () => {
-    const ast = parse(respiratoryMonitoring.source);
-    const result = interpret(ast, { heart_rate: 80 });
-    expect(result.rules[0]?.matched).toBe(false);
-    expect(result.rules[0]?.condition.error).toMatch(/missing 'oxygen'/);
-    expect(result.trace.some((event) => event.kind === "error")).toBe(true);
+  it("resets the timer after false and after a missing value", () => {
+    const result = simulate(parse(temporal), [
+      { timeMs: 0, patient: { oxygen: 91 } },
+      { timeMs: 20_000, patient: { oxygen: 97 } },
+      { timeMs: 30_000, patient: { oxygen: 91 } },
+      { timeMs: 50_000, patient: {} },
+      { timeMs: 60_000, patient: { oxygen: 91 } },
+      { timeMs: 90_000, patient: { oxygen: 91 } },
+    ]);
+    expect(result.steps[2]?.rules[0]?.elapsedDurationMs).toBe(0);
+    expect(result.steps[3]?.rules[0]?.condition.result).toBeNull();
+    expect(result.steps[3]?.rules[0]?.condition.error).toMatch(/missing a finite value/);
+    expect(result.triggeredActions.filter((action) => action.kind === "alert")).toHaveLength(1);
   });
 
-  it("exposes parse + validate + interpret through run()", () => {
-    const { result, validation } = run(respiratoryMonitoring.source, DEMO_PATIENT);
-    expect(validation.diagnostics.some((d) => d.code === "unused_monitor")).toBe(true);
-    expect(result.rules.some((rule) => rule.ruleName === "severe_hypoxia" && rule.matched)).toBe(true);
+  it("acknowledges before the deadline and at the exact boundary", () => {
+    for (const acknowledgementTime of [100_000, 150_000]) {
+      const result = simulate(parse(temporal), [
+        { timeMs: 0, patient: { oxygen: 91 } },
+        { timeMs: 30_000, patient: { oxygen: 91 } },
+        { timeMs: acknowledgementTime, patient: { oxygen: 91 }, acknowledge: ["low#1"] },
+      ]);
+      expect(result.final.rules[0]?.acknowledgement.status).toBe("acknowledged");
+      expect(result.triggeredActions.some((action) => action.reason === "acknowledgement_timeout")).toBe(false);
+    }
+  });
+
+  it("escalates a missed acknowledgement exactly once", () => {
+    const result = simulate(parse(temporal), [
+      { timeMs: 0, patient: { oxygen: 91 } },
+      { timeMs: 30_000, patient: { oxygen: 91 } },
+      { timeMs: 149_999, patient: { oxygen: 91 } },
+      { timeMs: 150_000, patient: { oxygen: 91 } },
+      { timeMs: 200_000, patient: { oxygen: 91 } },
+    ]);
+    const escalations = result.triggeredActions.filter(
+      (action) => action.reason === "acknowledgement_timeout",
+    );
+    expect(escalations).toHaveLength(1);
+    expect(escalations[0]).toMatchObject({
+      kind: "escalate", target: "physician", firingInstanceId: "low#1", timeMs: 150_000,
+    });
+    expect(result.final.rules[0]?.acknowledgement.status).toBe("escalated");
+  });
+
+  it("creates stable IDs for independent firing cycles", () => {
+    const result = simulate(parse(immediate), [
+      { timeMs: 0, patient: { oxygen: 91 } },
+      { timeMs: 1_000, patient: { oxygen: 91 } },
+      { timeMs: 2_000, patient: { oxygen: 97 } },
+      { timeMs: 3_000, patient: { oxygen: 91 } },
+    ]);
+    expect(result.triggeredActions.filter((action) => action.kind === "alert").map(
+      (action) => action.firingInstanceId,
+    )).toEqual(["low#1", "low#2"]);
+  });
+
+  it("rejects duplicate or out-of-order timestamps", () => {
+    expect(() => simulate(parse(immediate), [
+      { timeMs: 10, patient: { oxygen: 91 } },
+      { timeMs: 10, patient: { oxygen: 91 } },
+    ])).toThrow(/strictly increasing/);
+  });
+
+  it("does not execute invalid programs through run()", () => {
+    expect(() => run(`workflow bad { rule r { when x > 1 then { alert nurse } } }`, { x: 2 }))
+      .toThrow(InterpreterError);
   });
 });

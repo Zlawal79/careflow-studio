@@ -45,7 +45,11 @@ class Lexer {
         this.readIdentifierOrKeyword(start);
         continue;
       }
-      if (isDigit(char) || (char === "." && isDigit(this.peekNext()))) {
+      if (
+        isDigit(char) ||
+        (char === "." && isDigit(this.peekNext())) ||
+        (char === "-" && (isDigit(this.peekNext()) || this.peekNext() === "."))
+      ) {
         this.readNumber(start);
         continue;
       }
@@ -128,6 +132,7 @@ class Lexer {
   }
 
   private readNumber(start: Mark): void {
+    if (this.peek() === "-") this.advance();
     while (isDigit(this.peek())) {
       this.advance();
     }

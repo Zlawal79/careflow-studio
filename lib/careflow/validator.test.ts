@@ -151,4 +151,45 @@ describe("validator", () => {
     expect(result.ok).toBe(true);
     expect(result.diagnostics.filter((d) => d.severity === "error")).toHaveLength(0);
   });
+
+  it("rejects zero and negative temporal or acknowledgement durations", () => {
+    const source = `workflow demo {
+      monitor oxygen
+      rule low {
+        when oxygen < 92 for 0 seconds
+        then {
+          alert nurse
+          require acknowledgment within 0 minutes
+          otherwise escalate physician
+        }
+      }
+    }`;
+    expect(codes(source).filter((code) => code === "invalid_duration")).toHaveLength(2);
+    expect(codes(`workflow demo {
+      monitor oxygen
+      rule low { when oxygen < 92 for -1 minutes then { alert nurse } }
+    }`)).toContain("invalid_duration");
+  });
+
+  it("requires an alert and escalation target for acknowledgement", () => {
+    const source = `workflow demo {
+      monitor oxygen
+      rule low {
+        when oxygen < 92
+        then { priority high require acknowledgment within 2 minutes }
+      }
+    }`;
+    const found = codes(source);
+    expect(found).toContain("ack_without_alert");
+    expect(found).toContain("ack_missing_escalation");
+  });
+
+  it("uses exact interval reasoning at large thresholds", () => {
+    const source = `workflow demo {
+      monitor x
+      rule low { when x < 10000000000001 then { alert a } }
+      rule high { when x > 10000000000002 then { alert b } }
+    }`;
+    expect(codes(source)).toContain("mutually_exclusive_conditions");
+  });
 });

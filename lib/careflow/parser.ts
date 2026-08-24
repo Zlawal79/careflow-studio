@@ -1,6 +1,8 @@
 import type {
   Action,
+  AcknowledgementClause,
   ComparisonCondition,
+  DurationLiteral,
   Identifier,
   MonitorDeclaration,
   NumberLiteral,
@@ -9,6 +11,8 @@ import type {
 } from "./ast";
 import { lex } from "./lexer";
 import {
+  durationToMs,
+  isDurationUnit,
   ParseError,
   TokenKind,
   type ComparisonOperator,
@@ -24,12 +28,12 @@ import {
  *   body         := (monitor | rule)*
  *   monitor      := "monitor" IDENT
  *   rule         := "rule" IDENT "{" "when" condition "then" "{" action* "}" "}"
- *   condition    := IDENT comparison NUMBER
+ *   condition    := IDENT comparison NUMBER ("for" duration)?
+ *   duration     := NUMBER ("second" | "seconds" | "minute" | "minutes" | "hour" | "hours")
  *   comparison   := "<" | ">" | "<=" | ">=" | "==" | "!="
  *   action       := "alert" IDENT | "priority" IDENT | "escalate" IDENT
- *
- * Later phases can extend `condition` with temporal suffixes and `action`
- * with acknowledgement deadlines without changing this descent structure.
+ *   acknowledgement := "require" ("acknowledgment" | "acknowledgement")
+ *                      "within" duration ("otherwise" "escalate" IDENT)?
  */
 export function parse(source: string): Workflow {
   return new Parser(lex(source)).parseWorkflow();
@@ -97,8 +101,19 @@ class Parser {
     this.expect(TokenKind.LBrace, "Expected '{' after 'then'.");
 
     const actions: Action[] = [];
+    let acknowledgement: AcknowledgementClause | null = null;
     while (!this.check(TokenKind.RBrace) && !this.check(TokenKind.Eof)) {
-      actions.push(this.parseAction());
+      if (this.check(TokenKind.Require)) {
+        if (acknowledgement) {
+          throw new ParseError(
+            "A rule may contain only one acknowledgement clause.",
+            this.peek().loc,
+          );
+        }
+        acknowledgement = this.parseAcknowledgement();
+      } else {
+        actions.push(this.parseAction());
+      }
     }
 
     this.expect(TokenKind.RBrace, "Expected '}' to close the 'then' block.");
@@ -109,6 +124,7 @@ class Parser {
       name,
       condition,
       actions,
+      acknowledgement,
       loc: start.loc,
     };
   }
@@ -117,12 +133,61 @@ class Parser {
     const variable = this.parseIdentifier("Expected a monitored variable in the condition.");
     const operator = this.parseOperator();
     const threshold = this.parseNumber();
+    let duration: DurationLiteral | null = null;
+    if (this.match(TokenKind.For)) {
+      duration = this.parseDuration("Expected a duration after 'for'.");
+    }
     return {
       type: "ComparisonCondition",
       variable,
       operator,
       threshold,
+      duration,
       loc: variable.loc,
+    };
+  }
+
+  private parseAcknowledgement(): AcknowledgementClause {
+    const start = this.expect(TokenKind.Require, "Expected 'require'.");
+    this.expect(
+      TokenKind.Acknowledgment,
+      "Expected 'acknowledgment' or 'acknowledgement' after 'require'.",
+    );
+    this.expect(TokenKind.Within, "Expected 'within' after acknowledgement.");
+    const within = this.parseDuration("Expected an acknowledgement duration after 'within'.");
+    let otherwise: AcknowledgementClause["otherwise"] = null;
+    if (this.match(TokenKind.Otherwise)) {
+      const escalation = this.expect(
+        TokenKind.Escalate,
+        "Expected 'escalate' after 'otherwise'.",
+      );
+      const target = this.parseIdentifier("Expected an escalation target.");
+      otherwise = { type: "EscalateAction", target, loc: escalation.loc };
+    }
+    return { type: "AcknowledgementClause", within, otherwise, loc: start.loc };
+  }
+
+  private parseDuration(message: string): DurationLiteral {
+    const valueToken = this.expect(TokenKind.Number, message);
+    const value: NumberLiteral = {
+      type: "NumberLiteral",
+      value: valueToken.numericValue ?? Number(valueToken.lexeme),
+      raw: valueToken.lexeme,
+      loc: valueToken.loc,
+    };
+    const unit = this.expect(TokenKind.Identifier, "Expected a duration unit.");
+    if (!isDurationUnit(unit.lexeme)) {
+      throw new ParseError(
+        `Invalid duration unit '${unit.lexeme}'. Expected seconds, minutes, or hours.`,
+        unit.loc,
+      );
+    }
+    return {
+      type: "DurationLiteral",
+      value,
+      unit: unit.lexeme,
+      milliseconds: durationToMs(value.value, unit.lexeme),
+      loc: value.loc,
     };
   }
 
