@@ -1,0 +1,11 @@
+import type { Workflow } from "@/lib/careflow";
+
+export function WorkflowDiagram({ workflow }: { workflow: Workflow }) {
+  return <div className="grid gap-4 xl:grid-cols-2">{workflow.rules.map((rule)=><div key={rule.name.name} className="rounded-xl border border-[#dce5e2] bg-[#f9fbfa] p-4"><div className="mb-3 flex items-center justify-between"><b className="text-sm">{rule.name.name}</b><span className="rounded bg-[#e7f5f2] px-2 py-1 text-[10px] font-bold text-[#087f72]">RULE PATH</span></div><FlowNode tone="monitor">Monitor {rule.condition.variable.name}</FlowNode><Arrow/><FlowNode>{rule.condition.variable.name} {rule.condition.operator} {rule.condition.threshold.raw}</FlowNode>{rule.condition.duration&&<><Arrow/><FlowNode tone="time">Persist for {rule.condition.duration.value.raw} {rule.condition.duration.unit}</FlowNode></>}<Arrow/><div className="grid gap-2">{rule.actions.map((action,index)=><FlowNode key={index} tone={action.type==="EscalateAction"?"danger":"action"}>{action.type==="AlertAction"?`Alert ${action.recipient.name}`:action.type==="PriorityAction"?`Priority ${action.level.name}`:`Escalate ${action.target.name}`}</FlowNode>)}</div>{rule.acknowledgement&&<><Arrow/><FlowNode tone="time">Acknowledged within {rule.acknowledgement.within.value.raw} {rule.acknowledgement.within.unit}?</FlowNode><div className="mt-2 grid grid-cols-2 gap-2 text-center text-[10px] font-bold uppercase tracking-wider"><span className="text-[#087f72]">Yes · Complete</span><span className="text-[#b53b3b]">No · Escalate</span></div>{rule.acknowledgement.otherwise&&<div className="mt-2"><FlowNode tone="danger">Escalate {rule.acknowledgement.otherwise.target.name}</FlowNode></div>}</>}</div>)}</div>;
+}
+
+function FlowNode({ children, tone="default" }: { children: React.ReactNode; tone?:"default"|"monitor"|"time"|"action"|"danger" }) {
+  const styles={default:"border-[#cfdad7] bg-white",monitor:"border-[#8fc7bd] bg-[#edf8f6] text-[#076a60]",time:"border-[#d4c28c] bg-[#fffaf0] text-[#795a17]",action:"border-[#abc4dc] bg-[#f1f6fb] text-[#285b8b]",danger:"border-[#e4b4b4] bg-[#fff4f4] text-[#a43232]"};
+  return <div className={`rounded-lg border px-3 py-2 text-center text-xs font-semibold ${styles[tone]}`}>{children}</div>;
+}
+function Arrow(){ return <div className="py-1 text-center text-xs text-[#8ea19c]">↓</div>; }
