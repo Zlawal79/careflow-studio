@@ -53,16 +53,16 @@ export function deriveRuntimeMarkers(events: readonly SimulationEvent[]): Runtim
     const thenActions=event.actions.filter((action)=>action.reason==="then");
     if(thenActions.length){
       add(event,"rule_fired",`${event.ruleName} fired`,event.firingInstanceId?`Stable firing instance ${event.firingInstanceId}.`:"The runtime emitted rule actions.");
-      for(const action of thenActions.filter((action)=>action.kind==="alert")) add(event,"alert_created",`Alert created for ${action.target}`,`${action.firingInstanceId} · emitted by the CareFlow interpreter.`);
+      for(const action of thenActions.filter((action)=>action.kind==="alert")) add(event,"alert_created",`Alert created for ${formatTarget(action.target)}`,`${action.firingInstanceId} · emitted by the CareFlow interpreter.`);
     }
     if(event.acknowledgementStatus==="pending"&&previous?.acknowledgementStatus!=="pending") add(event,"ack_window",`Acknowledgement window opened`,`${event.firingInstanceId??event.ruleName} is awaiting acknowledgement.`);
     if(event.acknowledgementStatus==="acknowledged"&&previous?.acknowledgementStatus!=="acknowledged") add(event,"acknowledged",`${event.firingInstanceId??event.ruleName} acknowledged`,`The acknowledgement was accepted by the runtime.`);
     const timeoutEscalation=event.actions.some((action)=>action.reason==="acknowledgement_timeout");
     if(timeoutEscalation){
       add(event,"deadline_missed",`Acknowledgement deadline missed`,`${event.firingInstanceId??event.ruleName} reached its runtime deadline.`);
-      add(event,"escalated",`Escalation triggered`,event.actions.filter((action)=>action.kind==="escalate").map((action)=>`Escalate to ${action.target}`).join(", "));
+      add(event,"escalated",`Escalation triggered`,event.actions.filter((action)=>action.kind==="escalate").map((action)=>`Escalate to ${formatTarget(action.target)}`).join(", "));
     }else if(event.escalationStatus.triggered&&!previous?.escalationStatus.triggered){
-      add(event,"escalated",`Escalation triggered`,event.escalationStatus.target?`Escalate to ${event.escalationStatus.target}.`:"The runtime reported escalation.");
+      add(event,"escalated",`Escalation triggered`,event.escalationStatus.target?`Escalate to ${formatTarget(event.escalationStatus.target)}.`:"The runtime reported escalation.");
     }
     previousByRule.set(event.ruleName,event);
   }
@@ -110,5 +110,6 @@ export function semanticTitle(event:SimulationEvent, previous?:SimulationEvent):
 }
 
 export function markerColor(kind:MarkerKind){return markerMeta[kind].color;}
+function formatTarget(target:string){return target.split("_").map((word)=>word.charAt(0).toUpperCase()+word.slice(1)).join(" ");}
 export function formatTime(ms:number){const total=Math.floor(ms/1000);return `${String(Math.floor(total/60)).padStart(2,"0")}:${String(total%60).padStart(2,"0")}`;}
 export function formatDuration(ms:number){return ms>=60_000?`${Number((ms/60_000).toFixed(2))}m`:`${Number((ms/1000).toFixed(2))}s`;}

@@ -50,8 +50,8 @@ describe("runtime visualization adapter",()=>{
       {timeMs:130_000,patient:{connectivity_status:0}},
     ]);
     expect(result.triggeredActions).toEqual(expect.arrayContaining([
-      expect.objectContaining({kind:"alert",target:"er_operations",reason:"then"}),
-      expect.objectContaining({kind:"escalate",target:"clinical_engineering",reason:"acknowledgement_timeout",timeMs:130_000}),
+      expect.objectContaining({kind:"alert",target:"clinical_engineering",reason:"then"}),
+      expect.objectContaining({kind:"escalate",target:"hospital_security_operations",reason:"acknowledgement_timeout",timeMs:130_000}),
     ]));
     expect(result.final.rules[0]?.acknowledgement.status).toBe("escalated");
     expect(deriveRuntimeMarkers(result.events).map((marker)=>marker.kind)).toEqual(expect.arrayContaining(["alert_created","ack_window","deadline_missed","escalated"]));

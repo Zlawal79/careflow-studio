@@ -157,7 +157,7 @@ export const deviceAlert: ExampleProgram = {
   id: "device_alert",
   title: "ER Ventilator Connectivity Loss",
   description:
-    "Synthetic operational connectivity incident with acknowledgement and escalation. No device control.",
+    "Synthetic gateway anomaly routed from Clinical Engineering to Hospital Security Operations. No device control.",
   source: `// ${SYNTHETIC_DISCLAIMER}
 workflow device_alert {
 
@@ -167,10 +167,10 @@ workflow device_alert {
     when connectivity_status == 0
 
     then {
-      alert er_operations
+      alert clinical_engineering
       priority high
       require acknowledgment within 2 minutes
-      otherwise escalate clinical_engineering
+      otherwise escalate hospital_security_operations
     }
   }
 }
