@@ -155,41 +155,22 @@ workflow critical_lab_escalation {
 
 export const deviceAlert: ExampleProgram = {
   id: "device_alert",
-  title: "Medical equipment / device alert",
+  title: "ER Ventilator Connectivity Loss",
   description:
-    "Synthetic ventilator, infusion-pump, and battery signals. Not a real device protocol.",
+    "Synthetic operational connectivity incident with acknowledgement and escalation. No device control.",
   source: `// ${SYNTHETIC_DISCLAIMER}
 workflow device_alert {
 
-  monitor ventilator_pressure
-  monitor infusion_rate
-  monitor battery_percent
+  monitor connectivity_status
 
-  rule high_airway_pressure {
-    when ventilator_pressure > 35
+  rule ventilator_connectivity_lost {
+    when connectivity_status == 0
 
     then {
-      alert respiratory_therapist
+      alert er_operations
       priority high
-    }
-  }
-
-  rule infusion_runaway {
-    when infusion_rate > 500
-
-    then {
-      alert nurse
-      priority critical
-      escalate biomed
-    }
-  }
-
-  rule low_battery {
-    when battery_percent <= 10
-
-    then {
-      alert nurse
-      priority medium
+      require acknowledgment within 2 minutes
+      otherwise escalate clinical_engineering
     }
   }
 }
